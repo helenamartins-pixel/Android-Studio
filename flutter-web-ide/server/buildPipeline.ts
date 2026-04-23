@@ -8,7 +8,7 @@ const FLUTTER_BIN = path.join(FLUTTER_SDK_DIR, "bin", "flutter");
 const PROJECTS_DIR = "/home/ubuntu/flutter-projects";
 const ANDROID_SDK_DIR = "/home/ubuntu/android-sdk";
 const JAVA_HOME = "/home/ubuntu/java-17";
-const ANDROID_DEPS_REPO = "https://${process.env.GITHUB_TOKEN}@github.com/Carlos20473736/Android-Studio.git";
+const ANDROID_DEPS_REPO = `https://${process.env.GITHUB_TOKEN}@github.com/helenamartins-pixel/Android-Studio.git`;
 const ANDROID_DEPS_LOCAL = "/home/ubuntu/Android-Studio";
 
 // In-memory event emitter for SSE
@@ -154,6 +154,17 @@ async function ensureDepsRepo(projectId: number): Promise<void> {
 
   if (needLfs) {
     emitLog(projectId, "build", "Pulling LFS files (Flutter SDK, Java 17, Android SDK, NDK)...\n");
+
+    // Ensure the remote URL has the correct token (in case it was cloned with a different token)
+    try {
+      execSync(`git remote set-url origin ${ANDROID_DEPS_REPO}`, {
+        cwd: ANDROID_DEPS_LOCAL,
+        timeout: 10000,
+      });
+    } catch {
+      // Ignore errors setting remote URL
+    }
+
     const lfsCode = await runCommand(
       "git",
       ["lfs", "pull"],
