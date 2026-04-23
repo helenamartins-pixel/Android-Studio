@@ -1,7 +1,8 @@
 import { spawn, execSync } from "child_process";
 import path from "path";
 import fs from "fs";
-import { addBuildLog, updateProjectStatus } from "./db";
+import { addBuildLog, updateProjectStatus, getProjectById } from "./db";
+import { storageGetSignedUrl } from "./storage";
 
 const FLUTTER_SDK_DIR = "/home/ubuntu/flutter-sdk";
 const FLUTTER_BIN = path.join(FLUTTER_SDK_DIR, "bin", "flutter");
@@ -276,6 +277,21 @@ async function ensureFlutterSdk(projectId: number): Promise<void> {
     throw new Error("Failed to extract Flutter SDK");
   }
 
+  // Initialize a fake git repo in the Flutter SDK directory so flutter tool doesn't complain
+  // (flutter requires a git repo to check its own version)
+  try {
+    if (!fs.existsSync(path.join(FLUTTER_SDK_DIR, ".git"))) {
+      emitLog(projectId, "build", "Initializing git repo in Flutter SDK directory...\n");
+      execSync("git init && git commit --allow-empty -m 'init'", {
+        cwd: FLUTTER_SDK_DIR,
+        env: { ...process.env, GIT_AUTHOR_NAME: "flutter", GIT_AUTHOR_EMAIL: "flutter@flutter.dev", GIT_COMMITTER_NAME: "flutter", GIT_COMMITTER_EMAIL: "flutter@flutter.dev" },
+        timeout: 15000,
+      });
+    }
+  } catch (gitErr) {
+    emitLog(projectId, "build", `Warning: Could not init git in Flutter SDK: ${gitErr}\n`);
+  }
+
   // Run flutter precache to download engine artifacts (excluded from tarball to save space)
   emitLog(projectId, "build", "Running flutter precache to download engine artifacts...\n");
   const precacheCode = await runCommand(
@@ -448,6 +464,43 @@ async function killGradleDaemons() {
   }
 }
 
+/**
+ * Download ZIP from S3 to a local path if local file doesn't exist.
+ * Returns the local path to the ZIP file.
+ */
+async function resolveZipPath(projectId: number, localZipPath: string): Promise<string | null> {
+  // If local file exists, use it directly
+  if (localZipPath && fs.existsSync(localZipPath)) {
+    return localZipPath;
+  }
+
+  // Try to download from S3 using the zipKey stored in DB
+  try {
+    const project = await getProjectById(projectId);
+    if (!project?.zipKey) {
+      return null;
+    }
+
+    emitLog(projectId, "build", "Downloading project ZIP from S3 storage...\n");
+    const signedUrl = await storageGetSignedUrl(project.zipKey);
+
+    const response = await fetch(signedUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download ZIP from S3: ${response.status}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const downloadPath = path.join("/home/ubuntu/flutter-uploads", `${projectId}_downloaded.zip`);
+    fs.mkdirSync("/home/ubuntu/flutter-uploads", { recursive: true });
+    fs.writeFileSync(downloadPath, buffer);
+    emitLog(projectId, "build", `ZIP downloaded from S3 (${(buffer.length / 1024 / 1024).toFixed(1)} MB)\n`);
+    return downloadPath;
+  } catch (err: any) {
+    emitLog(projectId, "build", `Warning: Could not download ZIP from S3: ${err.message}\n`);
+    return null;
+  }
+}
+
 export async function runBuildPipeline(
   projectId: number,
   zipPath: string,
@@ -460,8 +513,11 @@ export async function runBuildPipeline(
     // === STEP 0: Ensure all dependencies are installed from Git ===
     await ensureAllDependencies(projectId, buildType);
 
+    // Resolve ZIP path — download from S3 if local file is missing
+    const resolvedZipPath = await resolveZipPath(projectId, zipPath);
+
     // If zipPath is provided, do extraction. Otherwise skip to build (rebuild case).
-    if (zipPath && fs.existsSync(zipPath)) {
+    if (resolvedZipPath && fs.existsSync(resolvedZipPath)) {
       // Step 1: Extract
       await updateProjectStatus(projectId, "extracting");
       emitLog(projectId, "extract", "Extracting ZIP archive...\n");
@@ -470,7 +526,7 @@ export async function runBuildPipeline(
 
       const extractCode = await runCommand(
         "unzip",
-        ["-o", zipPath, "-d", projectDir],
+        ["-o", resolvedZipPath, "-d", projectDir],
         projectDir,
         projectId,
         "extract"

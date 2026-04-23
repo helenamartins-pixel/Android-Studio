@@ -5,6 +5,7 @@ import fs from "fs";
 import { createProject, updateProjectStatus, getProjectById } from "./db";
 import { runBuildPipeline, subscribeToLogs, getProjectDir } from "./buildPipeline";
 import { spawn } from "child_process";
+import { storagePut } from "./storage";
 
 const UPLOAD_DIR = "/home/ubuntu/flutter-uploads";
 const PROJECTS_DIR = "/home/ubuntu/flutter-projects";
@@ -54,6 +55,18 @@ export function registerExpressRoutes(app: express.Express) {
       // Update with correct path
       const projectDir = getProjectDir(projectId);
       await updateProjectStatus(projectId, "uploading", { localPath: projectDir });
+
+      // Upload ZIP to S3 for persistence across Railway container restarts
+      let zipKey: string | undefined;
+      try {
+        const zipBuffer = fs.readFileSync(req.file.path);
+        const s3Key = `flutter-zips/${projectId}/${req.file.originalname || "project.zip"}`;
+        const { key } = await storagePut(s3Key, zipBuffer, "application/zip");
+        zipKey = key;
+        await updateProjectStatus(projectId, "uploading", { zipKey });
+      } catch (s3Err) {
+        console.error("Failed to upload ZIP to S3 (will use local file):", s3Err);
+      }
 
       res.json({
         success: true,
