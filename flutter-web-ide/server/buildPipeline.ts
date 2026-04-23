@@ -166,16 +166,30 @@ async function ensureDepsRepo(projectId: number): Promise<void> {
       // Ignore errors setting remote URL
     }
 
+    // Use --include to pull only the tarball files, avoiding index errors with project files
     const lfsCode = await runCommand(
       "git",
-      ["lfs", "pull"],
+      ["lfs", "pull", "--include", "*.tar.gz", "--exclude", ""],
       ANDROID_DEPS_LOCAL,
       projectId,
       "build"
     );
 
     if (lfsCode !== 0) {
-      throw new Error("Failed to pull LFS files from GitHub");
+      // Try individual file downloads as fallback
+      emitLog(projectId, "build", "git lfs pull had issues, trying individual file fetch...\n");
+      for (const archive of archives) {
+        const archivePath = path.join(ANDROID_DEPS_LOCAL, archive);
+        if (!fs.existsSync(archivePath) || fs.statSync(archivePath).size < 1000) {
+          await runCommand(
+            "git",
+            ["lfs", "pull", "--include", archive],
+            ANDROID_DEPS_LOCAL,
+            projectId,
+            "build"
+          );
+        }
+      }
     }
   }
 }
@@ -300,19 +314,6 @@ async function ensureFlutterSdk(projectId: number): Promise<void> {
     emitLog(projectId, "build", `Warning: Could not init git in Flutter SDK: ${gitErr}\n`);
   }
 
-  // Ensure curl is available (required by flutter precache to download Dart SDK)
-  try {
-    execSync("which curl", { stdio: "ignore", timeout: 5000 });
-  } catch {
-    emitLog(projectId, "build", "Installing curl (required by flutter)...\n");
-    try {
-      execSync("apt-get update -qq && apt-get install -y -qq curl", { timeout: 60000, stdio: "pipe" });
-      emitLog(projectId, "build", "curl installed successfully.\n");
-    } catch (aptErr) {
-      emitLog(projectId, "build", `Warning: Could not install curl: ${aptErr}\n`);
-    }
-  }
-
   // Run flutter precache to download engine artifacts (excluded from tarball to save space)
   emitLog(projectId, "build", "Running flutter precache to download engine artifacts...\n");
   const precacheCode = await runCommand(
@@ -393,6 +394,23 @@ async function ensureAndroidSdk(projectId: number): Promise<void> {
  */
 async function ensureAllDependencies(projectId: number, buildType: "web" | "apk"): Promise<void> {
   emitLog(projectId, "build", "=== Checking build dependencies ===\n");
+
+  // Step 0: Ensure required system tools are available (curl, unzip)
+  const missingTools: string[] = [];
+  try { execSync("which curl", { stdio: "ignore", timeout: 3000 }); } catch { missingTools.push("curl"); }
+  try { execSync("which unzip", { stdio: "ignore", timeout: 3000 }); } catch { missingTools.push("unzip"); }
+  if (missingTools.length > 0) {
+    emitLog(projectId, "build", `Installing missing tools: ${missingTools.join(", ")}...\n`);
+    try {
+      execSync(`apt-get update -qq && apt-get install -y -qq ${missingTools.join(" ")}`, {
+        timeout: 120000,
+        stdio: "pipe",
+      });
+      emitLog(projectId, "build", "System tools installed successfully.\n");
+    } catch (aptErr) {
+      emitLog(projectId, "build", `Warning: Could not install tools via apt: ${aptErr}\n`);
+    }
+  }
 
   // Step 1: Clone/update the dependencies repository
   await ensureDepsRepo(projectId);
