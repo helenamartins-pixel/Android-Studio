@@ -56,9 +56,28 @@ function getJavaHome(): string {
   return JAVA_HOME; // will fail later with a clear error
 }
 
+/** Read the engine hash from the Flutter SDK's engine.stamp file */
+function getFlutterEngineHash(): string {
+  const stampPath = path.join(FLUTTER_SDK_DIR, "bin", "cache", "engine.stamp");
+  try {
+    if (fs.existsSync(stampPath)) {
+      return fs.readFileSync(stampPath, "utf-8").trim();
+    }
+  } catch {}
+  // Fallback: read from engine.version
+  const versionPath = path.join(FLUTTER_SDK_DIR, "bin", "internal", "engine.version");
+  try {
+    if (fs.existsSync(versionPath)) {
+      return fs.readFileSync(versionPath, "utf-8").trim();
+    }
+  } catch {}
+  return "";
+}
+
 /** Build environment with Flutter SDK, Android SDK, Java 17 */
 function getBuildEnv(): Record<string, string> {
   const javaHome = getJavaHome();
+  const engineHash = getFlutterEngineHash();
   return {
     ...process.env as Record<string, string>,
     PATH: `${FLUTTER_SDK_DIR}/bin:${javaHome}/bin:${ANDROID_SDK_DIR}/cmdline-tools/latest/bin:${ANDROID_SDK_DIR}/platform-tools:${process.env.PATH}`,
@@ -67,6 +86,8 @@ function getBuildEnv(): Record<string, string> {
     ANDROID_HOME: ANDROID_SDK_DIR,
     ANDROID_SDK_ROOT: ANDROID_SDK_DIR,
     JAVA_HOME: javaHome,
+    // Prevent flutter from re-downloading engine artifacts — they are already in the tarball
+    ...(engineHash ? { FLUTTER_PREBUILT_ENGINE_VERSION: engineHash } : {}),
     // Limit Gradle JVM memory to prevent OOM daemon crashes
     GRADLE_OPTS: "-Xmx1536m -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dkotlin.daemon.jvm.options=-Xmx512m",
   };
@@ -287,45 +308,33 @@ async function ensureFlutterSdk(projectId: number): Promise<void> {
     "build"
   );
 
-  if (extractCode !== 0) {
+   if (extractCode !== 0) {
     throw new Error("Failed to extract Flutter SDK");
   }
 
-  // Add safe.directory exception and initialize a fake git repo in the Flutter SDK directory
-  // so flutter tool doesn't complain (flutter requires a git repo to check its own version)
+  // Fix the engine stamps so Flutter doesn't try to re-download the Dart SDK.
+  // The tarball already contains the Dart SDK binaries — we just need the stamps to match.
+  // We use FLUTTER_PREBUILT_ENGINE_VERSION env var (set in getBuildEnv) to prevent re-downloads.
   try {
-    // Add safe.directory to avoid 'dubious ownership' errors when running as root
-    execSync(`git config --global --add safe.directory ${FLUTTER_SDK_DIR}`, { timeout: 5000 });
-    execSync("git config --global --add safe.directory '*'", { timeout: 5000 });
-  } catch {
-    // ignore — best effort
-  }
+    const engineVersionPath = path.join(FLUTTER_SDK_DIR, "bin", "internal", "engine.version");
+    const engineStampPath = path.join(FLUTTER_SDK_DIR, "bin", "cache", "engine.stamp");
+    const dartSdkStampPath = path.join(FLUTTER_SDK_DIR, "bin", "cache", "engine-dart-sdk.stamp");
 
-  try {
-    if (!fs.existsSync(path.join(FLUTTER_SDK_DIR, ".git"))) {
-      emitLog(projectId, "build", "Initializing git repo in Flutter SDK directory...\n");
-      execSync("git init && git commit --allow-empty -m 'init'", {
-        cwd: FLUTTER_SDK_DIR,
-        env: { ...process.env, GIT_AUTHOR_NAME: "flutter", GIT_AUTHOR_EMAIL: "flutter@flutter.dev", GIT_COMMITTER_NAME: "flutter", GIT_COMMITTER_EMAIL: "flutter@flutter.dev" },
-        timeout: 15000,
-      });
+    // Read the correct engine hash from engine.version (this is the source of truth)
+    let engineHash = "";
+    if (fs.existsSync(engineVersionPath)) {
+      engineHash = fs.readFileSync(engineVersionPath, "utf-8").trim();
     }
-  } catch (gitErr) {
-    emitLog(projectId, "build", `Warning: Could not init git in Flutter SDK: ${gitErr}\n`);
-  }
 
-  // Run flutter precache to download engine artifacts (excluded from tarball to save space)
-  emitLog(projectId, "build", "Running flutter precache to download engine artifacts...\n");
-  const precacheCode = await runCommand(
-    FLUTTER_BIN,
-    ["precache", "--no-android", "--no-ios", "--no-linux", "--no-macos", "--no-windows", "--no-fuchsia", "--web"],
-    "/home/ubuntu",
-    projectId,
-    "build"
-  );
-
-  if (precacheCode !== 0) {
-    emitLog(projectId, "build", "Warning: flutter precache had issues, but continuing...\n");
+    if (engineHash) {
+      // Write the correct hash to both stamps so Flutter sees them as up-to-date
+      fs.mkdirSync(path.dirname(engineStampPath), { recursive: true });
+      fs.writeFileSync(engineStampPath, engineHash + "\n");
+      fs.writeFileSync(dartSdkStampPath, engineHash + "\n");
+      emitLog(projectId, "build", `Flutter engine stamps set to ${engineHash.substring(0, 12)}...\n`);
+    }
+  } catch (stampErr) {
+    emitLog(projectId, "build", `Warning: Could not fix engine stamps: ${stampErr}\n`);
   }
 
   emitLog(projectId, "build", "Flutter SDK installed successfully.\n");
