@@ -277,8 +277,16 @@ async function ensureFlutterSdk(projectId: number): Promise<void> {
     throw new Error("Failed to extract Flutter SDK");
   }
 
-  // Initialize a fake git repo in the Flutter SDK directory so flutter tool doesn't complain
-  // (flutter requires a git repo to check its own version)
+  // Add safe.directory exception and initialize a fake git repo in the Flutter SDK directory
+  // so flutter tool doesn't complain (flutter requires a git repo to check its own version)
+  try {
+    // Add safe.directory to avoid 'dubious ownership' errors when running as root
+    execSync(`git config --global --add safe.directory ${FLUTTER_SDK_DIR}`, { timeout: 5000 });
+    execSync("git config --global --add safe.directory '*'", { timeout: 5000 });
+  } catch {
+    // ignore — best effort
+  }
+
   try {
     if (!fs.existsSync(path.join(FLUTTER_SDK_DIR, ".git"))) {
       emitLog(projectId, "build", "Initializing git repo in Flutter SDK directory...\n");
