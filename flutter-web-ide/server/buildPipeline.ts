@@ -300,6 +300,19 @@ async function ensureFlutterSdk(projectId: number): Promise<void> {
     emitLog(projectId, "build", `Warning: Could not init git in Flutter SDK: ${gitErr}\n`);
   }
 
+  // Ensure curl is available (required by flutter precache to download Dart SDK)
+  try {
+    execSync("which curl", { stdio: "ignore", timeout: 5000 });
+  } catch {
+    emitLog(projectId, "build", "Installing curl (required by flutter)...\n");
+    try {
+      execSync("apt-get update -qq && apt-get install -y -qq curl", { timeout: 60000, stdio: "pipe" });
+      emitLog(projectId, "build", "curl installed successfully.\n");
+    } catch (aptErr) {
+      emitLog(projectId, "build", `Warning: Could not install curl: ${aptErr}\n`);
+    }
+  }
+
   // Run flutter precache to download engine artifacts (excluded from tarball to save space)
   emitLog(projectId, "build", "Running flutter precache to download engine artifacts...\n");
   const precacheCode = await runCommand(
