@@ -1,37 +1,45 @@
 # Android Studio Dependencies
 
-Este repositório contém as dependências completas do Android SDK para compilação de projetos Flutter em APK, incluindo suporte a plugins nativos (Firebase, Google Ads, etc.).
+Este repositório contém todas as dependências necessárias para compilar projetos Flutter em APK/Web. O Flutter Web IDE clona este repositório automaticamente — o servidor só precisa de **Git + Git LFS**.
 
-## Conteúdo
+## Arquivos
 
-### sdk-essential.tar.gz
-Componentes essenciais do Android SDK:
-- **build-tools** (34.0.0, 35.0.0, 36.0.0)
-- **platforms** (android-34, android-35, android-36)
-- **platform-tools** (adb, fastboot)
-- **cmdline-tools** (sdkmanager, avdmanager)
-- **licenses** (todas aceitas)
-- **cmake** (3.22.1)
+| Arquivo | Tamanho | Conteúdo |
+|---------|---------|----------|
+| `sdk-essential.tar.gz` | 153MB | Android SDK: build-tools (34/35/36), platforms, cmdline-tools, platform-tools, cmake, licenses |
+| `sdk-ndk.tar.gz` | 689MB | Android NDK 28.2 (plugins nativos: Firebase, Google Ads, camera) |
+| `flutter-sdk.tar.gz` | 300MB | Flutter SDK 3.41 (sem .git interno, cache otimizado) |
+| `java17-jdk.tar.gz` | 134MB | OpenJDK 17 (necessário para Gradle) |
 
-### sdk-ndk.tar.gz
-Android NDK para compilação de código nativo (C/C++):
-- **NDK** 28.2.13676358
-- Necessário para plugins Flutter que usam código nativo (Firebase, Google Mobile Ads, camera, etc.)
+## Uso automático
 
-## Uso
+O Flutter Web IDE faz tudo automaticamente ao compilar um projeto:
 
-O Flutter Web IDE clona este repositório automaticamente e extrai o SDK antes de compilar APKs.
+1. Clona este repositório (se ainda não existir localmente)
+2. Puxa os arquivos LFS
+3. Extrai Java 17 → `/usr/lib/jvm/java-17-openjdk-amd64/`
+4. Extrai Flutter SDK → `/home/ubuntu/flutter-sdk/`
+5. Extrai Android SDK → `/home/ubuntu/android-sdk/`
+6. Extrai NDK → `/home/ubuntu/android-sdk/ndk/`
+
+## Uso manual
 
 ```bash
-# Extrair SDK essencial
-tar -xzf sdk-essential.tar.gz -C /home/ubuntu/
+git clone https://github.com/Carlos20473736/Android-Studio.git
+cd Android-Studio
+git lfs pull
 
-# Extrair NDK (necessário para plugins nativos)
+# Extrair Java 17
+sudo tar -xzf java17-jdk.tar.gz -C /usr/
+
+# Extrair Flutter SDK
+tar -xzf flutter-sdk.tar.gz -C /home/ubuntu/
+
+# Extrair Android SDK + NDK
+tar -xzf sdk-essential.tar.gz -C /home/ubuntu/
 tar -xzf sdk-ndk.tar.gz -C /home/ubuntu/
 ```
 
-## Requisitos
+## Requisitos do servidor
 
-- Java 17 (OpenJDK)
-- Flutter SDK 3.41+
-- Git LFS (para baixar os arquivos .tar.gz)
+Apenas **Git** e **Git LFS** precisam estar instalados. Todo o resto é baixado automaticamente deste repositório.
